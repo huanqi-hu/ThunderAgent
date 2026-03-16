@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+# env_vars.sh.example — copy to env_vars.sh and edit for your cluster
+# Usage: cp env_vars.sh.example env_vars.sh && vim env_vars.sh
+
+# ─── Resolve this file's directory (used for relative defaults) ──────
+_THIS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# ─── Docker configuration ───────────────────────────────────────────
+DOCKER_DATA_ROOT=/scratch/$USER/docker-rootless
+XDG_RUNTIME_DIR=/tmp/xdg-$USER
+DOCKER_HOST=unix://$XDG_RUNTIME_DIR/docker.sock
+DOCKER_STORAGE_DRIVER=overlay2        # or fuse-overlayfs
+
+# ─── Model ──────────────────────────────────────────────────────────
+MODEL_PATH=                           # absolute path to MiniMax-M2.5 weights
+
+# ─── SGLang launch mode ────────────────────────────────────────────
+# docker:        Use SGLANG_IMAGE as-is (default)
+# docker-mount:  Use SGLANG_IMAGE + mount local sglang source into container
+# conda:         Native launch via conda environment (no Docker for SGLang)
+# uv:            Native launch via uv from a local sglang checkout
+SGLANG_MODE=docker
+
+# docker / docker-mount: Docker image to use
+SGLANG_IMAGE=lmsysorg/sglang:v0.5.9
+
+# docker-mount: host path to sglang Python package (e.g. /home/you/sglang/python/sglang)
+SGLANG_LOCAL_PATH=
+
+# conda: conda environment name with sglang installed
+SGLANG_CONDA_ENV=sgl-local-editable
+
+# uv: path to sglang's python/ directory containing pyproject.toml
+SGLANG_UV_PROJECT=                               # e.g. /home/$USER/sglang/python
+# uv: Python version (system default may be too new; 3.12 recommended)
+SGLANG_UV_PYTHON=3.12
+
+# Extra args passed to sglang.launch_server (all modes)
+# Example: SGLANG_EXTRA_ARGS="--mem-fraction-static 0.85"
+SGLANG_EXTRA_ARGS=
+
+# ─── OpenHands ──────────────────────────────────────────────────────
+# Clone: git clone https://github.com/Weili-0234/OpenHands.git "$OPENHANDS_PATH"
+#   cd "$OPENHANDS_PATH" && git checkout 466454ae05
+OPENHANDS_PATH=$HOME/OpenHands
+
+# ─── ThunderAgent ────────────────────────────────────────────────────
+# Absolute path to ThunderAgent repo root. Auto-detected from parent
+# directory (this example lives under ThunderAgent/examples/datagen/harbor/).
+# Override only if ThunderAgent is installed elsewhere.
+THUNDERAGENT_PATH=
+
+# ─── Harbor ─────────────────────────────────────────────────────────
+HARBOR_JOBS_DIR=$HOME/harbor-jobs
+HARBOR_ENV_DIR="${_THIS_DIR}/harbor-env"
+
+# ─── Docker Hub credentials (for SWE-bench image pulls) ─────────────
+# Point to a shell script that exports DOCKER_USERNAME and DOCKER_TOKEN.
+# Leave empty if your Docker daemon is already authenticated.
+DOCKER_CREDENTIALS_SCRIPT=
+
+# ─── SGLang server ──────────────────────────────────────────────────
+SGLANG_PORT=8000
+SGLANG_ADMIN_KEY=changeme             # used by --flush-cache admin API
+
+# ─── ThunderAgent ───────────────────────────────────────────────────
+TA_PORT=8300
+
+# ─── Experiment defaults ────────────────────────────────────────────
+DEFAULT_DURATION=120                   # minutes
+DEFAULT_N_TASKS=500
+DEFAULT_N_ATTEMPTS=8
+DEFAULT_DATASET=swebench-verified
+
+# ─── Agent environment variables ────────────────────────────────────
+# These control OpenHands agent behavior and LLM sampling.
+AGENT_DISABLE_STUCK_DETECTION=true
+AGENT_ENABLE_DEFAULT_CONDENSER=false
+AGENT_LLM_API_KEY=not-needed         # routed through ThunderAgent, not a real API key
+AGENT_LLM_NATIVE_TOOL_CALLING=true
+AGENT_LLM_TEMPERATURE=1.0
+AGENT_LLM_TOP_P=0.95
+AGENT_LLM_TOP_K=40
+
+# ─── Harbor run overrides ──────────────────────────────────────────
+OVERRIDE_CPUS=1
+OVERRIDE_MEMORY_MB=8192
+NETWORK_MODE=host
