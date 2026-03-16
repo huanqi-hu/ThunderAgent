@@ -11,6 +11,15 @@ End-to-end inference and rollout examples with ThunderAgent on both single-node 
 | ToolOrchestra | [`inference/ToolOrchestra`](inference/ToolOrchestra) | Multi-tool orchestration agent for complex workflows |
 
 
+## Data Generation
+
+Large-scale rollout generation with ThunderAgent:
+
+| Agent | Directory | Description |
+|-------|-----------|-------------|
+| OpenHands | [`datagen/harbor`](datagen/harbor/) | SWE-bench trajectory generation at scale with Harbor + SGLang |
+
+
 ## RL Training
 
 Complete RL training pipelines with ThunderAgent:
