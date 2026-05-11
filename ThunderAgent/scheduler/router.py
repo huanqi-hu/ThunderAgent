@@ -116,6 +116,15 @@ class MultiBackendRouter:
         self.char_to_token_ratio: float = 5.0
         self._ratio_initialized: bool = False
 
+        # Weight sync coordination: when active, new data-plane requests block
+        # on _weight_sync_event and the scheduler loop skips ticks. This lets a
+        # trainer pause vLLM backends (e.g. to broadcast new weights) without
+        # racing the ThunderAgent scheduler.
+        self._weight_sync_active: bool = False
+        self._weight_sync_event: asyncio.Event = asyncio.Event()
+        self._weight_sync_event.set()  # Not blocking initially
+        self._weight_sync_watchdog: Optional[asyncio.Task] = None
+
     async def start(self):
         """Start the router."""
         logger.info(f"Started router with {len(self.backends)} backend(s): {list(self.backends.keys())}")
@@ -138,6 +147,15 @@ class MultiBackendRouter:
 
     async def stop(self):
         """Stop the router."""
+        # Stop the weight sync watchdog if running
+        if self._weight_sync_watchdog is not None:
+            self._weight_sync_watchdog.cancel()
+            try:
+                await self._weight_sync_watchdog
+            except asyncio.CancelledError:
+                pass
+            self._weight_sync_watchdog = None
+
         # Stop the scheduler
         if self._scheduler_task:
             self._scheduler_stop = True
@@ -155,6 +173,69 @@ class MultiBackendRouter:
         
         await self.client.aclose()
         logger.info("Router stopped")
+
+    # -------------------------------------------------------------------------
+    # Weight Sync Coordination
+    # -------------------------------------------------------------------------
+
+    @property
+    def weight_sync_active(self) -> bool:
+        return self._weight_sync_active
+
+    async def begin_weight_sync(self, timeout: float = 300.0) -> None:
+        """Enter weight sync mode.
+
+        Effects:
+        1. Sets weight_sync_active flag
+        2. Clears _weight_sync_event so new data-plane requests block
+        3. Scheduler loop will skip ticks while flag is set
+        4. Starts a watchdog timer that auto-exits after ``timeout`` seconds
+
+        Idempotent: a second begin_weight_sync call while already active logs
+        a warning and returns without resetting the watchdog.
+        """
+        if self._weight_sync_active:
+            logger.warning("begin_weight_sync called while already in weight sync mode")
+            return
+        self._weight_sync_active = True
+        self._weight_sync_event.clear()
+        self._weight_sync_watchdog = asyncio.create_task(self._weight_sync_timeout(timeout))
+        logger.info("Weight sync mode ENTERED - holding new requests, suspending scheduler")
+
+    async def end_weight_sync(self) -> None:
+        """Exit weight sync mode and release any held requests.
+
+        Idempotent: end_weight_sync called while not active logs a warning
+        and returns.
+        """
+        if not self._weight_sync_active:
+            logger.warning("end_weight_sync called while not in weight sync mode")
+            return
+        if self._weight_sync_watchdog is not None:
+            self._weight_sync_watchdog.cancel()
+            try:
+                await self._weight_sync_watchdog
+            except asyncio.CancelledError:
+                pass
+            self._weight_sync_watchdog = None
+        self._weight_sync_active = False
+        self._weight_sync_event.set()
+        logger.info("Weight sync mode EXITED - releasing held requests, resuming scheduler")
+
+    async def _weight_sync_timeout(self, timeout: float) -> None:
+        """Watchdog: auto-exit weight sync mode if end_weight_sync is never called."""
+        try:
+            await asyncio.sleep(timeout)
+        except asyncio.CancelledError:
+            return
+        if self._weight_sync_active:
+            logger.error(
+                "Weight sync watchdog fired after %.0fs - auto-exiting weight sync mode to unblock requests",
+                timeout,
+            )
+            self._weight_sync_active = False
+            self._weight_sync_event.set()
+            self._weight_sync_watchdog = None
 
     # -------------------------------------------------------------------------
     # Backend Selection
@@ -295,6 +376,11 @@ class MultiBackendRouter:
         
         Returns: True if can proceed
         """
+        # Block if weight sync is in progress - all data-plane requests wait here
+        if not self._weight_sync_event.is_set():
+            logger.debug(f"Program {program_id} waiting for weight sync to complete")
+            await self._weight_sync_event.wait()
+
         state.step_count += 1
         is_new_program = state.step_count == 1
         
@@ -662,6 +748,8 @@ class MultiBackendRouter:
         while not self._scheduler_stop:
             try:
                 await asyncio.sleep(self._scheduler_interval)
+                if self._weight_sync_active:
+                    continue  # Skip scheduler tick during weight sync
                 await self._scheduled_check()
             except asyncio.CancelledError:
                 break
